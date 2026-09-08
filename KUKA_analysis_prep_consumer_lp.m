@@ -1,5 +1,5 @@
 %% ========================================================================
-%  EMG / IMU ANALYSIS DATA PREPARATION
+%  EMG / IMU ANALYSIS DATA PREPARATION UPDATED Sept 1 2026
 % ========================================================================
 %  Builds on emg_imu_sync_pipeline_FIXED.m's sync + trim framework, but:
 %
@@ -289,23 +289,21 @@ meanc2_imu1 = calibrated_pose_accel_mean(imu1_c2_6ax, flange_calib_files);
 meanc1_imu2 = calibrated_pose_accel_mean(imu2_c1_6ax, head_calib_files);
 meanc2_imu2 = calibrated_pose_accel_mean(imu2_c2_6ax, head_calib_files);
 
-% Torso: there is currently no torso_calib_files field anywhere in the
-% batch driver CONFIG. If a 3rd/4th IMU is actually in use, add one
-% (P.torso_calib_files, same struct shape as flange/head) and pass it
-% here -- and also apply it to IMU4_AandG in the trial-data section
-% further down (it currently skips apply_mems_calibration entirely).
-% Until then this falls back to the uncorrected mean, same as before.
-if isfield(P, 'torso_calib_files')
-    meanc1_imu4 = calibrated_pose_accel_mean(imu4_c1_6ax, P.torso_calib_files);
-    meanc2_imu4 = calibrated_pose_accel_mean(imu4_c2_6ax, P.torso_calib_files);
-else
-    meanc1_imu4 = mean(imu4_c1_6ax(:, 1:3), 1, 'omitnan');
-    meanc2_imu4 = mean(imu4_c2_6ax(:, 1:3), 1, 'omitnan');
-end
+% Torso: DISABLED -- torso IMU data is no longer used downstream (see the
+% num_imus_detected cap just below, which turns off every torso branch in
+% this file). Left as comments rather than deleted in case torso support
+% needs to come back.
+% if isfield(P, 'torso_calib_files')
+%     meanc1_imu4 = calibrated_pose_accel_mean(imu4_c1_6ax, P.torso_calib_files);
+%     meanc2_imu4 = calibrated_pose_accel_mean(imu4_c2_6ax, P.torso_calib_files);
+% else
+%     meanc1_imu4 = mean(imu4_c1_6ax(:, 1:3), 1, 'omitnan');
+%     meanc2_imu4 = mean(imu4_c2_6ax(:, 1:3), 1, 'omitnan');
+% end
 
 calibR_1 = createCalibration(meanc1_imu1, meanc2_imu1);  % Flange
 calibR_2 = createCalibration(meanc1_imu2, meanc2_imu2);  % Head
-calibR_4 = createCalibration(meanc1_imu4, meanc2_imu4);  % Torso (if present)
+% calibR_4 = createCalibration(meanc1_imu4, meanc2_imu4);  % Torso -- DISABLED, see note above
 
 vars = imu_data.Properties.VariableNames;
 
@@ -318,6 +316,16 @@ if ~has_imu3_or_4 && ~ismember('Ax1', vars) && ~ismember('Ax_1', vars)
 end
 num_imus_detected = 2 + double(has_imu3_or_4);
 fprintf('Detected %d IMU sensor(s) in current dataset.\n', num_imus_detected);
+
+% TORSO DISABLED: every torso computation/output block in this file is
+% gated behind `if num_imus_detected == 3`. Capping the value here turns
+% all of them off in one place, rather than commenting out the ~15
+% scattered if-blocks individually (calibration, filtering, cycle-trim,
+% resampling, packaging, and the legacy package_level_dataset helper).
+% calibR_4/meanc1_imu4/meanc2_imu4 above are similarly disabled. To bring
+% torso support back: remove this line, re-enable the calibR_4 block
+% above, and add P.torso_calib_files to the batch driver CONFIG.
+num_imus_detected = min(num_imus_detected, 2);
 
 % --- FLANGE (IMU 1) ---
 if ismember('Ax1', vars)
@@ -397,12 +405,12 @@ end
 if isfield(P, 'imu_6axis_lp_cutoff_hz')
     imu_6axis_lp_cutoff_hz = P.imu_6axis_lp_cutoff_hz;
 else
-    imu_6axis_lp_cutoff_hz = 5.0;
+    imu_6axis_lp_cutoff_hz = 4.0;
 end
 [b_lp6, a_lp6] = butter(2, imu_6axis_lp_cutoff_hz / (imu_fs/2), 'low');  % 6-axis LP, used ahead of six_axis_resamp / six_axis_synctrim_resamp (Section 8b/8c)
 
 imu_cal_lp1 = filtfilt(b_lp, a_lp, imu_cal);    % rotation_lp_cutoff_hz LP, full recording, all IMU/axis columns
-imu_cal_lp5 = filtfilt(b_lp6, a_lp6, imu_cal);  % imu_6axis_lp_cutoff_hz LP, full recording, all IMU/axis columns
+imu_cal_lp4 = filtfilt(b_lp6, a_lp6, imu_cal);  % imu_6axis_lp_cutoff_hz LP, full recording, all IMU/axis columns
 
 % Initial sync trim -- identical for every IMU column, since they all
 % come from the same physically-synced recording.
@@ -419,7 +427,7 @@ if idxStart_imu < 1 || idxEnd_imu > size(imu_cal, 1)
 end
 imu_cal_trimmed     = imu_cal(idxStart_imu:idxEnd_imu, :);
 imu_cal_lp1_trimmed = imu_cal_lp1(idxStart_imu:idxEnd_imu, :);  % pre-filtered (full-recording), sync-trim slice
-imu_cal_lp5_trimmed = imu_cal_lp5(idxStart_imu:idxEnd_imu, :);  % pre-filtered (full-recording), sync-trim slice
+imu_cal_lp4_trimmed = imu_cal_lp4(idxStart_imu:idxEnd_imu, :);  % pre-filtered (full-recording), sync-trim slice
 t_imu_trimmed   = (0:size(imu_cal_trimmed,1)-1) / imu_fs;
 
 %% 4. MULTI-CHANNEL EMG EXTRACTION, SYNC TRIM & RECTIFICATION (ALL CHANNELS)
@@ -734,7 +742,7 @@ head_rot_broadband_cycle   = head_rot_broadband(idxStart_imu_cycle : idxEnd_imu_
 % Also crop the FULL 6-axis calibrated flange/head (and torso) streams at
 % the same boundaries, so downstream analyses have access to more than
 % just the single swing-direction rotation signal if needed.
-imu_flange_6axis_cycle = imu_cal_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, FLANGE_IMU_COLS);
+% imu_flange_6axis_cycle = imu_cal_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, FLANGE_IMU_COLS); % DISABLED -- was only used for the now-disabled data.imu_flange.six_axis_native output below; not referenced anywhere else
 imu_head_6axis_cycle   = imu_cal_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, HEAD_IMU_COLS);
 if num_imus_detected == 3
     imu_torso_6axis_cycle = imu_cal_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, TORSO_IMU_COLS);
@@ -816,12 +824,12 @@ end
 % columns (Ax Ay Az Gx Gy Gz) was already run through a bidirectional
 % (filtfilt, zero-phase) 2nd-order Butterworth lowpass at
 % imu_6axis_lp_cutoff_hz (default 5 Hz) BACK IN SECTION 3, on the FULL,
-% untrimmed recording (imu_cal_lp5) -- same filter family/order as the
+% untrimmed recording (imu_cal_lp4) -- same filter family/order as the
 % rotation_lp_cutoff_hz gyro lowpass used for cycle detection, just a
 % different cutoff.
 % Here we only SLICE that pre-filtered array at the cycle-trim boundaries
 % (idxStart_imu_cycle:idxEnd_imu_cycle, relative to the sync-trimmed
-% array, same indexing as imu_cal_lp5_trimmed / imu_flange_6axis_cycle
+% array, same indexing as imu_cal_lp4_trimmed / imu_flange_6axis_cycle
 % etc.) -- filtfilt is never run on an already-trimmed segment, so trim
 % boundaries don't bias the filtered samples nearest to them. Resampling
 % uses the same normalized-length interp1 approach used for
@@ -829,8 +837,8 @@ end
 % t_imu_cycle->t_emg_final mapping), so a small native duration mismatch
 % between the IMU and EMG cycle-trimmed lengths doesn't require
 % extrapolation at the edges.
-imu_flange_6axis_lp = imu_cal_lp5_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, FLANGE_IMU_COLS);
-imu_head_6axis_lp   = imu_cal_lp5_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, HEAD_IMU_COLS);
+imu_flange_6axis_lp = imu_cal_lp4_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, FLANGE_IMU_COLS);
+imu_head_6axis_lp   = imu_cal_lp4_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, HEAD_IMU_COLS);
 
 resamp_6axis = @(sig6) cell2mat(arrayfun(@(c) ...
     interp1(linspace(0,1,size(sig6,1)), sig6(:,c), linspace(0,1,N_final), 'linear')', ...
@@ -840,7 +848,7 @@ Flange_6axis_2000Hz = resamp_6axis(imu_flange_6axis_lp);   % [N_final x 6]
 Head_6axis_2000Hz   = resamp_6axis(imu_head_6axis_lp);     % [N_final x 6]
 
 if num_imus_detected == 3
-    imu_torso_6axis_lp = imu_cal_lp5_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, TORSO_IMU_COLS);
+    imu_torso_6axis_lp = imu_cal_lp4_trimmed(idxStart_imu_cycle:idxEnd_imu_cycle, TORSO_IMU_COLS);
     Torso_6axis_2000Hz = resamp_6axis(imu_torso_6axis_lp);  % [N_final x 6]
 end
 
@@ -861,20 +869,20 @@ resamp_6axis_sync = @(sig6) cell2mat(arrayfun(@(c) ...
     interp1(linspace(0,1,size(sig6,1)), sig6(:,c), linspace(0,1,N_sync_only), 'linear')', ...
     1:size(sig6,2), 'UniformOutput', false));
 
-% Same fix as Section 8b: slice the FULL-RECORDING-lowpassed imu_cal_lp5
+% Same fix as Section 8b: slice the FULL-RECORDING-lowpassed imu_cal_lp4
 % (built once in Section 3, before any trimming) at the sync-trim
 % boundaries, rather than filtering the already sync-trimmed
 % imu_cal_trimmed segment -- keeps filtfilt off of trimmed/edge-sensitive
-% data here too. imu_cal_lp5_trimmed is exactly this: imu_cal_lp5 sliced
+% data here too. imu_cal_lp4_trimmed is exactly this: imu_cal_lp4 sliced
 % at idxStart_imu:idxEnd_imu, i.e. the sync-trim length.
-imu_flange_6axis_synctrim_lp = imu_cal_lp5_trimmed(:, FLANGE_IMU_COLS);
-imu_head_6axis_synctrim_lp   = imu_cal_lp5_trimmed(:, HEAD_IMU_COLS);
+imu_flange_6axis_synctrim_lp = imu_cal_lp4_trimmed(:, FLANGE_IMU_COLS);
+imu_head_6axis_synctrim_lp   = imu_cal_lp4_trimmed(:, HEAD_IMU_COLS);
 
 Flange_6axis_synctrim_resamp = resamp_6axis_sync(imu_flange_6axis_synctrim_lp);   % [N_sync_only x 6]
 Head_6axis_synctrim_resamp   = resamp_6axis_sync(imu_head_6axis_synctrim_lp);     % [N_sync_only x 6]
 
 if num_imus_detected == 3
-    imu_torso_6axis_synctrim_lp = imu_cal_lp5_trimmed(:, TORSO_IMU_COLS);
+    imu_torso_6axis_synctrim_lp = imu_cal_lp4_trimmed(:, TORSO_IMU_COLS);
     Torso_6axis_synctrim_resamp = resamp_6axis_sync(imu_torso_6axis_synctrim_lp);  % [N_sync_only x 6]
 end
 
@@ -1233,7 +1241,7 @@ end
 % their own time base, data.emg.t_synctrim.
 
 
-data.emg.signal        = EMG_all;                 % [n_emg_channels x N_final]
+data.emg.signal_bp      = EMG_all;                 % [n_emg_channels x N_final]
 data.emg.t              = t_emg_final;             % re-zeroed time base (s), matches IMU resampled signals
 data.emg.fs             = emg_fs;
 data.emg.channel_ids_global = ch_range;             % global channel numbers (1-128) matching row order
@@ -1265,7 +1273,8 @@ data.dprime.min_samples_per_bin = dprime_min_samples_per_bin;
 % physical-swing cycle boundaries like data.emg.signal / signal_broadband_rect
 % above, so these are a different length (N_sync, not N_final) and carry
 % their own time base, data.emg.t_synctrim.
-data.emg.signal_synctrim_highpass = hp_emg_trimmed;     % [n_emg_channels x N_sync], sync-trimmed, high-pass ONLY -- not rectified, not bandpassed
+
+% data.emg.signal_synctrim_highpass = hp_emg_trimmed;    % comment out to save space % [n_emg_channels x N_sync], sync-trimmed, high-pass ONLY -- not rectified, not bandpassed
 data.emg.signal_synctrim_rect     = emg_rect_all_sync;   % [n_emg_channels x N_sync], sync-trimmed, high-pass + rectified
 data.emg.signal_synctrim_rms      = emg_rms_all_sync;    % [n_emg_channels x N_sync], sync-trimmed, high-pass + centered RMS (rms_win_sec window) -- NOT cycle-trimmed
 data.emg.t_synctrim               = t_emg_trimmed;       % time base (s) for the three arrays above
@@ -1273,17 +1282,20 @@ data.emg.t_synctrim               = t_emg_trimmed;       % time base (s) for the
 
 % Flange IMU
 data.imu_flange.rotation_native   = flange_rot_cycle;      
-data.imu_flange.rotation_resamp   = Flange_rot_2000Hz;      
-data.imu_flange.six_axis_native   = imu_flange_6axis_cycle; % [N_imu_cycle x 6] @ native fs
+data.imu_flange.rotation_resamp   = Flange_rot_2000Hz;     
+% data.imu_flange.six_axis_native   = imu_flange_6axis_cycle; % DISABLED to save space -- no longer used by KUKA_head_kinematics_summary.m, which now uses six_axis_resamp only
 data.imu_flange.six_axis_resamp   = Flange_6axis_2000Hz;   % [N_final x 6] @ emg_fs, 5 Hz lowpass (filtfilt) applied at native imu_fs before resampling
 data.imu_flange.t_native          = t_imu_cycle;
 data.imu_flange.fs_native         = imu_fs;
-data.imu_flange.rotation_native_broadband = flange_rot_broadband_cycle;
+% data.imu_flange.rotation_native_broadband = flange_rot_broadband_cycle; % comment out to save space
+
 % Sync-trimmed (NOT cycle-trimmed), resampled onto the sync-trimmed EMG
 % time base (N_sync_only samples @ emg_fs) -- requirement: sync-trimmed
 % IMU, resampled. Same idea as rotation_resamp/six_axis_resamp above, but
 % for the full Level-1 sync-trim length instead of the cycle-trimmed one.
-data.imu_flange.rotation_synctrim_resamp  = Flange_rot_sync_only_resamp;  % [N_sync_only x 1]
+
+% % data.imu_flange.rotation_synctrim_resamp  = Flange_rot_sync_only_resamp;  % [N_sync_only x 1
+
 data.imu_flange.six_axis_synctrim_resamp  = Flange_6axis_synctrim_resamp; % [N_sync_only x 6], 5 Hz lowpass applied at native imu_fs before resampling
 data.imu_flange.t_synctrim_resamp         = t_sync_only;                  % time base (s) for the two arrays above; numerically identical to data.emg.t_synctrim (same N_sync length @ emg_fs)
 
@@ -1324,6 +1336,29 @@ data.meta.idxStart_imu_cycle_abs = idxStart_imu_mv + idxStart_imu_cycle - mv_sta
 data.meta.idxEnd_imu_cycle_abs   = idxStart_imu_mv + idxEnd_imu_cycle   - mv_start_rel_imu;
 data.meta.idxStart_emg_cycle_abs = idxStart_emg_mv + idxStart_emg_cycle - mv_start_rel_emg;
 data.meta.idxEnd_emg_cycle_abs   = idxStart_emg_mv + idxEnd_emg_cycle   - mv_start_rel_emg;
+% Sync-trim-relative versions (index 1 = first sample of imu_cal_trimmed /
+% emg_bp_all_sync, i.e. the first sample AFTER the sync trim, NOT the raw
+% file). These are the exact indices used to slice imu_cal_trimmed /
+% emg_bp_all_sync down to the movement/cycle-trimmed data above -- saved
+% explicitly (and named distinctly from build_meta's same-named
+% idxStart_imu/idxStart_emg parameters above, which hold this same value
+% under a name that collides with the very different absolute sync-trim
+% boundary used elsewhere in this file) so cycle-trim accuracy can be
+% checked directly against the sync-trimmed arrays without re-deriving
+% this relative/absolute conversion.
+data.meta.idxStart_imu_cycle_rel = idxStart_imu_cycle;
+data.meta.idxEnd_imu_cycle_rel   = idxEnd_imu_cycle;
+data.meta.idxStart_emg_cycle_rel = idxStart_emg_cycle;
+data.meta.idxEnd_emg_cycle_rel   = idxEnd_emg_cycle;
+% Resampled-space equivalent for the IMU (index into six_axis_synctrim_resamp
+% / rotation_synctrim_resamp, at emg_fs). Numerically identical to
+% idxStart/idxEnd_emg_cycle_rel above -- six_axis_synctrim_resamp shares
+% EMG's exact sync-trimmed length/timebase (see t_synctrim_resamp) -- but
+% aliased under an IMU-specific name so it's not left implicit that the
+% EMG index doubles as the IMU-resampled index too. EMG has no separate
+% native-rate index: P.emg_fs is its only rate throughout this file.
+data.meta.idxStart_imu_cycle_resamp_rel = idxStart_emg_cycle;
+data.meta.idxEnd_imu_cycle_resamp_rel   = idxEnd_emg_cycle;
 % data.meta.sync_trim_mat_path     = sync_mat_path;
 % data.meta.movement_trim_mat_path = movement_mat_path;
 
@@ -1541,40 +1576,20 @@ function freq_hz = parse_freq_estimate_from_paramset(paramset_str)
     end
 end
 
-function calibR = createCalibration(c1, c2)
-    v1 = c1(:) / norm(c1);
-    v2 = c2(:) / norm(c2);
-
-    z_axis = v1;
-    y_axis = cross(z_axis, v2);
-    if norm(y_axis) < 1e-6
-        y_axis = [0; 1; 0];
-    else
-        y_axis = y_axis / norm(y_axis);
-    end
-    x_axis = cross(y_axis, z_axis);
-
-    calibR = [x_axis, y_axis, z_axis]';
-end
-
-% function calibrated_data = apply_mems_calibration(raw_data, calib_files)
-%     b_gyro = load(calib_files.b_gyro);
-%     b_acc  = load(calib_files.b_acc);
-%     s_acc  = load(calib_files.s_acc);
-%     t_acc  = load(calib_files.t_acc);
+% function calibR = createCalibration(c1, c2)
+%     v1 = c1(:) / norm(c1);
+%     v2 = c2(:) / norm(c2);
 % 
-%     b_gyro = b_gyro(:);
-%     b_acc  = b_acc(:);
+%     z_axis = v1;
+%     y_axis = cross(z_axis, v2);
+%     if norm(y_axis) < 1e-6
+%         y_axis = [0; 1; 0];
+%     else
+%         y_axis = y_axis / norm(y_axis);
+%     end
+%     x_axis = cross(y_axis, z_axis);
 % 
-%     A_raw = raw_data(:, 1:3)';
-%     G_raw = raw_data(:, 4:6)';
-% 
-%     A_unbiased = A_raw - b_acc;
-%     A_cal      = t_acc * (s_acc * A_unbiased);
-%     G_cal      = G_raw - b_gyro;
-% 
-% 
-%     calibrated_data = [A_cal', G_cal'];
+%     calibR = [x_axis, y_axis, z_axis]';
 % end
 
 function calibrated_data = apply_mems_calibration(raw_data, calib_files)
@@ -1583,27 +1598,47 @@ function calibrated_data = apply_mems_calibration(raw_data, calib_files)
     s_acc  = load(calib_files.s_acc);
     t_acc  = load(calib_files.t_acc);
 
-    b_gyro = b_gyro(:)';
-    b_acc  = b_acc(:)';
+    b_gyro = b_gyro(:);
+    b_acc  = b_acc(:);
 
-    A_raw = raw_data(:, 1:3);
-    G_raw = raw_data(:, 4:6);
+    A_raw = raw_data(:, 1:3)';
+    G_raw = raw_data(:, 4:6)';
 
     A_unbiased = A_raw - b_acc;
     A_cal      = t_acc * (s_acc * A_unbiased);
     G_cal      = G_raw - b_gyro;
 
 
-    calibrated_data = [A_cal, G_cal];
+    calibrated_data = [A_cal', G_cal'];
 end
 
-function cal_imu = calibrateIMU(imu_raw, calibR)
-    cal_imu = imu_raw;
-    if size(imu_raw, 2) >= 6
-        cal_imu(:, 1:3) = (calibR * imu_raw(:, 1:3)')';
-        cal_imu(:, 4:6) = (calibR * imu_raw(:, 4:6)')';
-    end
-end
+% function calibrated_data = apply_mems_calibration(raw_data, calib_files)
+%     b_gyro = load(calib_files.b_gyro);
+%     b_acc  = load(calib_files.b_acc);
+%     s_acc  = load(calib_files.s_acc);
+%     t_acc  = load(calib_files.t_acc);
+% 
+%     b_gyro = b_gyro(:)';
+%     b_acc  = b_acc(:)';
+% 
+%     A_raw = raw_data(:, 1:3);
+%     G_raw = raw_data(:, 4:6);
+% 
+%     A_unbiased = A_raw - b_acc;
+%     A_cal      = t_acc * (s_acc * A_unbiased);
+%     G_cal      = G_raw - b_gyro;
+% 
+% 
+%     calibrated_data = [A_cal, G_cal];
+% end
+
+% function cal_imu = calibrateIMU(imu_raw, calibR)
+%     cal_imu = imu_raw;
+%     if size(imu_raw, 2) >= 6
+%         cal_imu(:, 1:3) = (calibR * imu_raw(:, 1:3)')';
+%         cal_imu(:, 4:6) = (calibR * imu_raw(:, 4:6)')';
+%     end
+% end
 
 function numCycles = estimateNumCycles(signal)
     absSignal = abs(signal - mean(signal));

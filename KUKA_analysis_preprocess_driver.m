@@ -47,8 +47,11 @@
 
 clear; clc;
 
+% partic = [1,2,4,5,6,7,9,10];
+partic = 3;
 %% ------------------------- CONFIG --------------------------------------
-participant_num = 10;  % must match the participant_num used in the sync extractor
+for j = partic
+participant_num = j;  % must match the participant_num used in the sync extractor
 
 
 % --- Must match the sync_pulse_extractor CONFIG for this participant ---
@@ -144,12 +147,16 @@ flange_calib_files = struct( ...
     's_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A1 (flange)/cal_20260810/S_acc.txt', ...
     't_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A1 (flange)/cal_20260810/T_acc.txt');
 
+% head_calib_files = struct( ...
+%     'b_gyro', '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/b_gyr.txt', ...
+%     'b_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/b_acc.txt', ...
+%     's_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/S_acc.txt', ...
+%     't_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/T_acc.txt');
 head_calib_files = struct( ...
-    'b_gyro', '/home/jslab//Documents/Matt/IMU Offsets/A1 (flange)/cal_20260810/b_gyr.txt', ...
-    'b_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/b_acc.txt', ...
-    's_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/S_acc.txt', ...
-    't_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260810/T_acc.txt');
-
+    'b_gyro', '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260902/b_gyr.txt', ...
+    'b_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260902/b_acc.txt', ...
+    's_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260902/S_acc.txt', ...
+    't_acc',  '/home/jslab/Documents/Matt/IMU Offsets/A2 (head)/cal_20260902/T_acc.txt');
 
 
 %% ------------------------- LOAD THE MATCH KEY ---------------------------
@@ -303,6 +310,12 @@ for k = 1:n_pairs
         P.idxEnd_imu            = row.IMU_FinalLowToHighIdx;
 
         P.make_diagnostic_plots = true;
+
+
+        P.emg_rms_window_sec    = 0.1;
+
+        P.rotation_lp_cutoff_hz = 4.0;
+
         % P.expected_emg/P.expected_imu below are NOT available here --
         % EMG_Pre/EMG_Trial/EMG_Post/IMU_Pre/IMU_Trial/IMU_Post only exist
         % in EMG_IMU_Matched_Trials.csv, not in the (deliberately trimmer)
@@ -317,7 +330,8 @@ for k = 1:n_pairs
         % update this call to match.
         t_start = tic;
         try
-            data = KUKA_analysis_preprocess_consumer(P);
+            %data = KUKA_analysis_prep_aug26(P);
+            data = KUKA_analysis_prep_consumer_lp(P);
             log_ElapsedSec(run_i) = toc(t_start);
 
             if isfield(data, 'status') && strcmp(data.status, 'skipped_sync_fail')
@@ -359,3 +373,4 @@ fprintf(['\n=== BATCH COMPLETE: %d ok, %d skipped (sync fail), ' ...
     '%d skipped (no direction), %d error, out of %d run(s) [%d pair(s) x %d muscle setting(s)] ===\n'], ...
     n_ok, n_skipped_sync, n_skipped_direction, n_error, n_runs, n_pairs, n_muscles);
 fprintf('Log written to: %s\n', log_out_path);
+end
